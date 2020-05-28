@@ -15,12 +15,97 @@
 (defvar *strip-comments* t)
 (defvar *compress-whitespace* t)
 (defvar *test-verbose* nil)
-(defvar *entities*
+(defvar *entities* nil "Vector of all entities (initialized later)")
+
+(defparameter *entity-chars*
   #(("lt;" #\<)
     ("gt;" #\>)
     ("amp;" #\&)
     ("apos;" #\')
-    ("quot;" #\")))
+    ("quot;" #\"))
+  "Entities describable by 7-bit characters")
+
+(defparameter *entity-codes*
+  '(("Agrave" . 192) 
+    ("Aacute" . 193) 
+    ("Acirc" . 194) 
+    ("Atilde" . 195) 
+    ("Auml" . 196) 
+    ("Aring" . 197) 
+    ("AElig" . 198) 
+    ("Ccedil" . 199) 
+    ("Egrave" . 200) 
+    ("Eacute" . 201) 
+    ("Ecirc" . 202) 
+    ("Euml" . 203) 
+    ("Igrave" . 204) 
+    ("Iacute" . 205) 
+    ("Icirc" . 206) 
+    ("Iuml" . 207) 
+    ("ETH" . 208) 
+    ("Ntilde" . 209) 
+    ("Ograve" . 210) 
+    ("Oacute" . 211) 
+    ("Ocirc" . 212) 
+    ("Otilde" . 213) 
+    ("Ouml" . 214) 
+    ("Oslash" . 216) 
+    ("Ugrave" . 217) 
+    ("Uacute" . 218) 
+    ("Ucirc" . 219) 
+    ("Uuml" . 220) 
+    ("Yacute" . 221) 
+    ("THORN" . 222) 
+    ("szlig" . 223) 
+    ("agrave" . 224) 
+    ("aacute" . 225) 
+    ("acirc" . 226) 
+    ("atilde" . 227) 
+    ("auml" . 228) 
+    ("aring" . 229) 
+    ("aelig" . 230) 
+    ("ccedil" . 231) 
+    ("egrave" . 232) 
+    ("eacute" . 233) 
+    ("ecirc" . 234) 
+    ("euml" . 235) 
+    ("igrave" . 236) 
+    ("iacute" . 237) 
+    ("icirc" . 238) 
+    ("iuml" . 239) 
+    ("eth" . 240) 
+    ("ntilde" . 241) 
+    ("ograve" . 242) 
+    ("oacute" . 243) 
+    ("ocirc" . 244) 
+    ("otilde" . 245) 
+    ("ouml" . 246) 
+    ("oslash" . 248) 
+    ("ugrave" . 249) 
+    ("uacute" . 250) 
+    ("ucirc" . 251) 
+    ("uuml" . 252) 
+    ("yacute" . 253) 
+    ("thorn" . 254) 
+    ("yuml" . 255)
+    ("reg" . 174) 
+    ("micro" . 181) 
+    ("times" . 215) 
+    ("middot" . 183) 
+    ("nbsp" . 160) 
+    ("ge" . 8805) 
+    ("le" . 8804) 
+    ("macr" . 175) 
+    ("copy" . 169))
+  "Additional entities listed by numeric code, to avoid non-ascii characters in this file.")
+
+(eval-when (:load-toplevel :execute)
+  (setf *entities*
+        (concatenate 'vector
+                     *entity-chars*
+                     (mapcar #'(lambda (pair) (list (concatenate 'string (car pair) ";") (code-char (cdr pair))))
+                             *entity-codes*))))
+
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defvar *whitespace* (remove-duplicates 
                         '(#\Newline #\Space #\Tab #\Return #\Linefeed))))
@@ -432,7 +517,7 @@ character translation."
       (make-node
        :name (or suffix name)
        :ns (and suffix name)
-       :attrs attrs)
+       :attrs (nreverse attrs)) ; svs reverse it for easier comparison to original
       nsdecls))))
 
 (defrule end-tag ()
@@ -573,7 +658,13 @@ character translation."
 
 (defrule document ()
   (let (elem)
-    (if (match #\<)
+    (if (or (match #\<)
+            (progn (eat) nil) ; SVS skip past frakin' byte-order-marks
+            (match #\<)
+            (progn (eat) nil)
+            (match #\<)
+            (progn (eat) nil)
+            (match #\<))
         (must (or (processing-instruction-or-xmldecl s)
                   (comment-or-doctype s)
                   (setf elem (element s)))))
@@ -596,16 +687,22 @@ character translation."
     (write-xml e s :indent indent)))
 
 (defun parse (s &key (compress-whitespace t))
-  "Parses the supplied stream or string into a lisp node tree."
-  (let ((*compress-whitespace* compress-whitespace)
-        (stream
-         (etypecase s
-           (string (make-string-input-stream s))
-           (stream s))))
-    (handler-case
+  "Parses the supplied stream or string or pathname into a lisp node tree."
+  (let* ((*compress-whitespace* compress-whitespace)
+         (closeit nil)
+         (stream
+          (etypecase s
+            (string (make-string-input-stream s))
+            (pathname (setf closeit t)
+                      (open s :direction :input))
+            (stream s))))
+    (unwind-protect
+      (handler-case
         (document (make-state :stream stream))
-      (end-of-file () nil)
-      (xml-parse-error () nil))))
+        (end-of-file () nil)
+        (xml-parse-error () nil)
+        (error () nil))
+      (if closeit (close stream)))))
 
 ;;(trace end-tag comment comment-or-doctype content name xmldecl misc)
 ;;(trace processing-instruction processing-instruction-or-xmldecl element start-tag ws element-val)
